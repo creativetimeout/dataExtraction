@@ -16,6 +16,7 @@ v1.03    20.02.2017    Key assembly with join
 v1.04    22.02.2017    FirstSeen, lastSeen for every connection according to date of log file
 v1.05    26.11.2017    Cleanup of unused or outdated fuctionality (removed splunk option)
                        Included total bytes transferred
+v1.10    26.11.2017    Optimized dictionaries
 
 '''
 import gzip
@@ -33,14 +34,14 @@ def logOutput(logMessage, logfile, logType="INFO"):
     except:
         print("Error writing to logfile: {}\n".format(logfile), sys.exc_info()[0])
 
-def writeDictToFile(d, firstSeen, lastSeen, totalBytes, outDir):
+def writeDictToFile(d, outDir):
     outFile = open(outDir,'wt')
     # CSV header
     # connSourceIP + ';' + connSourceZone +';' + connTargetIP + ';' + connTargetZone + ';' + connTargetPort + ';' + connType
     print('SourceIP;SourceZone;TargetIP;TargetZone;TargetPort;ConnectionType;count;firstSeen;lastSeen;totalBytes', file=outFile)
     for x in d:
         # Output key and the number of registered connections
-        print(x + ';' + str(d[x]) + ";" + firstSeen[x] + ";" + lastSeen[x] + ";" + str(totalBytes[x]), file=outFile,)
+        print(x + ';' + str(d[x][0]) + ";" + str(d[x][1]) + ";" + str(d[x][2]) + ";" + str(d[x][3]), file=outFile,)
     outFile.close()
 
 def main():
@@ -73,9 +74,6 @@ def main():
 
     # Declare dictionary which will store accumulated connections
     connections = {}
-    firstSeen = {}
-    lastSeen = {}
-    totalBytes = {}
 
     # -------- Following secion is valid for CISCO ASA Log Format
     # Regular expression for syslog elements matching.
@@ -181,30 +179,27 @@ def main():
                     # Store unique connections with number of occurences in dictionary
                     key = ";".join([connSourceIP, connSourceZone, connTargetIP, connTargetZone, connTargetPort, connType])
                     if key in connections:
-                        connections[key] += 1
-                    else:
-                        connections[key] = 1
-
-                    if key in firstSeen:
-                        # get iso formatted date and convert to datetime
-                        firstCompareDate = datetime.date(int(firstSeen[key][0:4]),
-                                                         int(firstSeen[key][5:7]),
-                                                         int(firstSeen[key][8:10]))
-                        lastCompareDate = datetime.date(int(lastSeen[key][0:4]),
-                                                        int(lastSeen[key][5:7]),
-                                                        int(lastSeen[key][8:10]))
+                        connections[key][0] += 1
+                        # In case log files are not in sequential order, test dates
+                        firstCompareDate = datetime.date(int(connections[key][1][0:4]),
+                                                         int(connections[key][1][5:7]),
+                                                         int(connections[key][1][8:10]))
+                        lastCompareDate = datetime.date(int(connections[key][2][0:4]),
+                                                        int(connections[key][2][5:7]),
+                                                        int(connections[key][2][8:10]))
                         if firstCompareDate > fileDate:
-                            firstSeen[key] = fileDate.isoformat()
+                            connections[key][1] = fileDate.isoformat()
                         if lastCompareDate < fileDate:
-                            lastSeen[key] = fileDate.isoformat()
-                    else:
-                        firstSeen[key] = fileDate.isoformat()
-                        lastSeen[key] = firstSeen[key]
+                            connections[key][2] = fileDate.isoformat()
 
-                    if key in totalBytes:
-                        totalBytes[key] = totalBytes[key] + int(connBytes)
+
+
+                        # firstSeen has already been set during initialization
+                        connections[key][2] = fileDate.isoformat()
+                        connections[key][3] += int(connBytes)
                     else:
-                        totalBytes[key] = int(connBytes)
+                        # If no nonnections exist, then initialize
+                        connections[key]= [1, fileDate.isoformat(),fileDate.isoformat(), int(connBytes)]   # numConnects, firstSeen, lastSeen, totalBytes
 
                 else:
                     # Frequency of these cases is too high - removing logging // JV 13.02.2017
@@ -224,7 +219,7 @@ def main():
     # No further conversion necessary, since dictionary keys are in CSV format
     connectionFile = outputDirectory + 'AllConnections.csv'
     logOutput('Writing connections to file {}'.format(connectionFile), logf)
-    writeDictToFile(connections, firstSeen, lastSeen, totalBytes, connectionFile)
+    writeDictToFile(connections, connectionFile)
     logOutput('Completed', logf)
     logOutput(("*" * 40) + "\n" , logf)
 
